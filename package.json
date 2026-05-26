@@ -1,0 +1,34 @@
+{
+  "name": "pi-ez-secret-broker",
+  "version": "0.2.0",
+  "description": "Runtime credential handles for pi-chat/Gondolin backed by 1Password Connect.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-chat",
+    "gondolin",
+    "1password"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bry-guy/pi-ez-secret-broker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bry-guy/pi-ez-secret-broker/issues"
+  },
+  "homepage": "https://github.com/bry-guy/pi-ez-secret-broker#readme",
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
