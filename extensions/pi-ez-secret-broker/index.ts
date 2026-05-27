@@ -16,6 +16,7 @@ import {
   ttlMillis,
 } from "../../lib/policy.mjs";
 import { readOnePasswordConnectSecret } from "../../lib/onepassword-connect.mjs";
+import { matchSlashCommand } from "./match.js";
 
 type BrokerConfig = {
   backends: Record<string, any>;
@@ -176,45 +177,59 @@ function responseText(data: unknown): { content: { type: "text"; text: string }[
 }
 
 export default function piEzSecretBroker(pi: ExtensionAPI) {
-  pi.registerCommand("secret-broker", {
-    description: "Initialize and inspect pi-ez-secret-broker config",
-    handler: async (args, ctx) => {
-      const parts = String(args ?? "").trim().split(/\s+/).filter(Boolean);
-      const subcommand = parts[0] ?? "help";
-      const force = parts.includes("--force") || parts.includes("-f");
-      const project = parts.includes("--project") || parts.includes("-p");
-      const global = parts.includes("--global") || parts.includes("-g") || !project;
-      try {
-        if (["init", "new", "bootstrap"].includes(subcommand)) {
-          const written = writeConfigTemplate(global ? "global" : "project", force);
-          ctx.ui.notify(`pi-ez-secret-broker config written: ${written}`, "info");
-          return;
-        }
-        if (subcommand === "approve") {
-          const id = parts[1];
-          const approval = id ? approvals.get(id) : undefined;
-          if (!approval) throw new Error(`pending approval not found: ${id ?? "<missing>"}`);
-          approval.expiresAt = Date.now() + 10 * 60 * 1000;
-          writeAudit({ action: "approval_granted", approvalId: id, credential: approval.credential, method: approval.method, url: approval.url });
-          ctx.ui.notify(`approved ${id} for ${approval.method} ${approval.url}`, "info");
-          return;
-        }
-        if (subcommand === "status") {
-          const config = loadConfig();
-          ctx.ui.notify(
-            `pi-ez-secret-broker: ${Object.keys(config.credentials).length} credential(s): ${Object.keys(config.credentials).join(", ")}; pending approvals: ${approvals.size}`,
-            "info",
-          );
-          return;
-        }
+  async function handleSecretBroker(args: unknown, ctx: any) {
+    const parts = String(args ?? "").trim().split(/\s+/).filter(Boolean);
+    const subcommand = parts[0] ?? "help";
+    const force = parts.includes("--force") || parts.includes("-f");
+    const project = parts.includes("--project") || parts.includes("-p");
+    const global = parts.includes("--global") || parts.includes("-g") || !project;
+    try {
+      if (["init", "new", "bootstrap"].includes(subcommand)) {
+        const written = writeConfigTemplate(global ? "global" : "project", force);
+        ctx.ui.notify(`pi-ez-secret-broker config written: ${written}`, "info");
+        return;
+      }
+      if (subcommand === "approve") {
+        const id = parts[1];
+        const approval = id ? approvals.get(id) : undefined;
+        if (!approval) throw new Error(`pending approval not found: ${id ?? "<missing>"}`);
+        approval.expiresAt = Date.now() + 10 * 60 * 1000;
+        writeAudit({ action: "approval_granted", approvalId: id, credential: approval.credential, method: approval.method, url: approval.url });
+        ctx.ui.notify(`approved ${id} for ${approval.method} ${approval.url}`, "info");
+        return;
+      }
+      if (subcommand === "status") {
+        const config = loadConfig();
         ctx.ui.notify(
-          "Usage: /secret-broker init [--global|--project] [--force] | /secret-broker status | /secret-broker approve <id>",
+          `pi-ez-secret-broker: ${Object.keys(config.credentials).length} credential(s): ${Object.keys(config.credentials).join(", ")}; pending approvals: ${approvals.size}`,
           "info",
         );
-      } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        return;
       }
-    },
+      ctx.ui.notify(
+        "Usage: /secret-broker init [--global|--project] [--force] | /secret-broker status | /secret-broker approve <id>",
+        "info",
+      );
+    } catch (error) {
+      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  pi.registerCommand("secret-broker", {
+    description: "Initialize and inspect pi-ez-secret-broker config",
+    handler: handleSecretBroker,
+  });
+
+  pi.on("input", async (event, ctx) => {
+    const match = matchSlashCommand(event.text, ["secret-broker"]);
+    if (!match) return { action: "continue" };
+    const messages: string[] = [];
+    const remoteCtx = { ...ctx, ui: { ...ctx.ui, notify: (message: string) => messages.push(String(message)) } };
+    await handleSecretBroker(match.args, remoteCtx);
+    return {
+      action: "transform",
+      text: `The remote /secret-broker command completed. Reply to the user with this result exactly:\n\n${messages.join("\n\n") || "/secret-broker completed."}`,
+    };
   });
 
   pi.registerTool({
