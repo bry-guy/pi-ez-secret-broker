@@ -16,6 +16,7 @@ import {
   ttlMillis,
 } from "../../lib/policy.mjs";
 import { readOnePasswordConnectSecret } from "../../lib/onepassword-connect.mjs";
+import { getOrCreateBrokerApi } from "../../lib/broker-runtime.mjs";
 import { matchSlashCommand } from "./match.js";
 
 type BrokerConfig = {
@@ -177,6 +178,17 @@ function responseText(data: unknown): { content: { type: "text"; text: string }[
 }
 
 export default function piEzSecretBroker(pi: ExtensionAPI) {
+  const brokerApi = getOrCreateBrokerApi();
+  const registryKey = Symbol.for("pi-chat.vmConfigContributors.v1");
+  const registeredKey = Symbol.for("pi-ez-secret-broker.vmConfigContributorRegistered");
+  const globals = globalThis as Record<symbol, unknown>;
+  if (!globals[registeredKey]) {
+    const registry = (globals[registryKey] as { contributors: unknown[] } | undefined) ?? { contributors: [] };
+    globals[registryKey] = registry;
+    registry.contributors.push({ name: "pi-ez-secret-broker", contribute: brokerApi.vmFragmentForConversation });
+    globals[registeredKey] = true;
+  }
+
   async function handleSecretBroker(args: unknown, ctx: any) {
     const parts = String(args ?? "").trim().split(/\s+/).filter(Boolean);
     const subcommand = parts[0] ?? "help";
@@ -198,16 +210,48 @@ export default function piEzSecretBroker(pi: ExtensionAPI) {
         ctx.ui.notify(`approved ${id} for ${approval.method} ${approval.url}`, "info");
         return;
       }
+      if (subcommand === "github-app" && parts[1] === "configure") {
+        const valueAfter = (flag: string) => {
+          const index = parts.indexOf(flag);
+          return index >= 0 ? parts[index + 1] : undefined;
+        };
+        await brokerApi.configureGithubApp({
+          appId: valueAfter("--app-id") ?? valueAfter("--appId"),
+          installationId: valueAfter("--installation-id") ?? valueAfter("--installationId"),
+          privateKeyPath: valueAfter("--private-key") ?? valueAfter("--privateKeyPath"),
+        });
+        ctx.ui.notify(`GitHub App config written: ${brokerApi.paths().githubApp}`, "info");
+        return;
+      }
+      if (subcommand === "github-app" && parts[1] === "allow") {
+        const conversationId = parts[2];
+        const repos = parts.slice(3);
+        if (!conversationId || repos.length === 0) throw new Error("Usage: /secret-broker github-app allow <conversationId> <owner/repo> [...]");
+        await brokerApi.upsertGithubAppPolicy(conversationId, repos);
+        ctx.ui.notify(`allowed GitHub App repos for ${conversationId}: ${repos.join(", ")}`, "info");
+        return;
+      }
+      if (subcommand === "op-read" && parts[1] === "allow") {
+        const conversationId = parts[2];
+        const refs = parts.slice(3);
+        if (!conversationId || refs.length === 0) throw new Error("Usage: /secret-broker op-read allow <conversationId> <op://...> [...]");
+        await brokerApi.upsertOpReadPolicy(conversationId, refs);
+        ctx.ui.notify(`allowed 1Password refs for ${conversationId}: ${refs.join(", ")}`, "info");
+        return;
+      }
       if (subcommand === "status") {
-        const config = loadConfig();
+        const config = (() => {
+          try { return loadConfig(); } catch { return { credentials: {} }; }
+        })();
+        const policy = await brokerApi.loadPolicy();
         ctx.ui.notify(
-          `pi-ez-secret-broker: ${Object.keys(config.credentials).length} credential(s): ${Object.keys(config.credentials).join(", ")}; pending approvals: ${approvals.size}`,
+          `pi-ez-secret-broker: ${Object.keys(config.credentials).length} legacy credential(s): ${Object.keys(config.credentials).join(", ") || "none"}; broker conversations: ${Object.keys(policy).length}; pending approvals: ${approvals.size}`,
           "info",
         );
         return;
       }
       ctx.ui.notify(
-        "Usage: /secret-broker init [--global|--project] [--force] | /secret-broker status | /secret-broker approve <id>",
+        "Usage: /secret-broker init [--global|--project] [--force] | /secret-broker status | /secret-broker github-app configure --app-id ID --installation-id ID --private-key PATH | /secret-broker github-app allow <conversationId> <owner/repo> [...] | /secret-broker op-read allow <conversationId> <op://...> [...] | /secret-broker approve <id>",
         "info",
       );
     } catch (error) {

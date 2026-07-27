@@ -221,3 +221,33 @@ Not supported in v0.1:
 - non-HTTP protocols
 
 Use existing pi-chat runtime secrets only as an explicit fallback when a workflow cannot be represented as brokered HTTP.
+
+## Host broker for chat workers
+
+`pi-ez-secret-broker` also exposes a small host-local broker for pi-chat Gondolin workers. Workers receive only a per-conversation bearer token and can ask the broker for allowlisted derived credentials.
+
+Built-in broker backends:
+
+- `github-app-token`: mints short-lived GitHub App installation tokens for specific allowlisted repos.
+- `op-read`: resolves explicit `op://...` references through the host `op` CLI.
+
+Configure a private GitHub App on the host:
+
+```text
+/secret-broker github-app configure --app-id 123456 --installation-id 987654 --private-key /Users/you/.pi/agent/secret-broker/github-app.private-key.pem
+```
+
+Allow a conversation to use specific repos or 1Password refs:
+
+```text
+/secret-broker github-app allow <conversationId> bry-guy/pi-ez-chat-workspace
+/secret-broker op-read allow <conversationId> op://Private/Example/credential
+```
+
+Policy and audit files live under `~/.pi/agent/secret-broker/`. The GitHub App private key stays host-side; workers receive only short-lived installation tokens.
+
+When broker policy exists for a conversation, the VM also gets a read-only helper at `/gondolin-secret-broker/pi-secret` and `PI_SECRET_BROKER_HELPER` points to it:
+
+```sh
+$PI_SECRET_BROKER_HELPER op-read op://Private/Example/credential
+```
